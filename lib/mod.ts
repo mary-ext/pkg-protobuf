@@ -1575,7 +1575,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 								idx++;
 							}
 
-							/*#__INLINE__*/ set(obj, key, array);
+							set(obj, key, array);
 						} else {
 							let array = obj[key] as unknown[] | undefined;
 							if (array === undefined) {
@@ -1597,7 +1597,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 							return prependPath(key, result);
 						}
 
-						/*#__INLINE__*/ set(obj, key, result.value);
+						set(obj, key, result.value);
 					}
 				}
 
@@ -1615,10 +1615,10 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 										defaultValue = defaultValue();
 									}
 
-									/*#__INLINE__*/ set(obj, entry.key, defaultValue);
+									set(obj, entry.key, defaultValue);
 								}
 							} else if (entry.repeated && !entry.packed) {
-								/*#__INLINE__*/ set(obj, entry.key, []);
+								set(obj, entry.key, []);
 							} else {
 								return entry.missingIssue;
 							}
