@@ -39,8 +39,7 @@ type IssueLeaf =
 
 type IssueTree =
 	| IssueLeaf
-	| { ok: false; code: 'prepend'; key: Key; tree: IssueTree }
-	| { ok: false; code: 'join'; left: IssueTree; right: IssueTree };
+	| { ok: false; code: 'prepend'; key: Key; tree: IssueTree };
 
 export type Issue = Readonly<
 	| { code: 'unexpected_eof'; path: Key[] }
@@ -68,11 +67,6 @@ const UINT32_RANGE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_range', type: 
 const UINT64_RANGE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_range', type: 'uint64' };
 
 // #__NO_SIDE_EFFECTS__
-const joinIssues = (left: IssueTree | undefined, right: IssueTree): IssueTree => {
-	return left ? { ok: false, code: 'join', left, right } : right;
-};
-
-// #__NO_SIDE_EFFECTS__
 const prependPath = (key: Key, tree: IssueTree): IssueTree => {
 	return { ok: false, code: 'prepend', key, tree };
 };
@@ -88,11 +82,6 @@ const cloneIssueWithPath = (issue: IssueLeaf, path: Key[]): Issue => {
 const collectIssues = (tree: IssueTree, path: Key[] = [], issues: Issue[] = []): Issue[] => {
 	for (;;) {
 		switch (tree.code) {
-			case 'join': {
-				collectIssues(tree.left, path.slice(), issues);
-				tree = tree.right;
-				continue;
-			}
 			case 'prepend': {
 				path.push(tree.key);
 				tree = tree.tree;
@@ -106,36 +95,10 @@ const collectIssues = (tree: IssueTree, path: Key[] = [], issues: Issue[] = []):
 	}
 };
 
-const countIssues = (tree: IssueTree): number => {
-	let count = 0;
-	for (;;) {
-		switch (tree.code) {
-			case 'join': {
-				count += countIssues(tree.left);
-				tree = tree.right;
-				continue;
-			}
-			case 'prepend': {
-				tree = tree.tree;
-				continue;
-			}
-			default: {
-				return count + 1;
-			}
-		}
-	}
-};
-
 const formatIssueTree = (tree: IssueTree): string => {
 	let path = '';
-	let count = 0;
 	for (;;) {
 		switch (tree.code) {
-			case 'join': {
-				count += countIssues(tree.right);
-				tree = tree.left;
-				continue;
-			}
 			case 'prepend': {
 				path += `.${tree.key}`;
 				tree = tree.tree;
@@ -168,12 +131,7 @@ const formatIssueTree = (tree: IssueTree): string => {
 			break;
 	}
 
-	let msg = `${tree.code} at ${path || '.'} (${message})`;
-	if (count > 0) {
-		msg += ` (+${count} other issue(s))`;
-	}
-
-	return msg;
+	return `${tree.code} at ${path || '.'} (${message})`;
 };
 
 // #endregion
@@ -266,7 +224,7 @@ export const tryDecode = <TSchema extends MessageSchema>(
 ): Result<InferOutput<TSchema>> => {
 	const state = createDecoderState(buffer);
 
-	const result = schema['~~decode'](state, FLAG_EMPTY);
+	const result = schema['~~decode'](state);
 
 	if (result.ok) {
 		return result as Ok<InferOutput<TSchema>>;
@@ -310,7 +268,7 @@ export const decode = <TSchema extends MessageSchema>(
 ): InferOutput<TSchema> => {
 	const state = createDecoderState(buffer);
 
-	const result = schema['~~decode'](state, FLAG_EMPTY);
+	const result = schema['~~decode'](state);
 
 	if (result.ok) {
 		return result.value as InferOutput<TSchema>;
@@ -541,14 +499,9 @@ type kType = typeof kType;
 declare const kObjectType: unique symbol;
 type kObjectType = typeof kObjectType;
 
-// None set
-export const FLAG_EMPTY = 0;
-// Don't continue validation if an error is encountered
-export const FLAG_ABORT_EARLY = 1 << 0;
-
 type RawResult<T = unknown> = Ok<T> | IssueTree;
 
-type Decoder = (this: void, state: DecoderState, flags: number) => RawResult;
+type Decoder = (this: void, state: DecoderState) => RawResult;
 
 type Encoder = (this: void, state: EncoderState, input: unknown) => IssueTree | void;
 
@@ -580,7 +533,7 @@ const STRING_SINGLETON: StringSchema = {
 	kind: 'schema',
 	type: 'string',
 	wire: 2,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const length = readVarint(state);
 		if (!length.ok) {
 			return length;
@@ -642,7 +595,7 @@ const BYTES_SINGLETON: BytesSchema = {
 	kind: 'schema',
 	type: 'bytes',
 	wire: 2,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const length = readVarint(state);
 		if (!length.ok) {
 			return length;
@@ -681,7 +634,7 @@ const BOOLEAN_SINGLETON: BooleanSchema = {
 	kind: 'schema',
 	type: 'boolean',
 	wire: 0,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const result = readVarint(state);
 		if (!result.ok) {
 			return result;
@@ -718,7 +671,7 @@ const DOUBLE_SINGLETON: DoubleSchema = {
 	kind: 'schema',
 	type: 'double',
 	wire: 1,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const view = getDataView(state);
 		const value = view.getFloat64(state.p, true);
 
@@ -759,7 +712,7 @@ const FLOAT_SINGLETON: FloatSchema = {
 	kind: 'schema',
 	type: 'float',
 	wire: 5,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const view = getDataView(state);
 		const value = view.getFloat32(state.p, true);
 
@@ -807,7 +760,7 @@ const INT32_SINGLETON: Int32Schema = {
 	kind: 'schema',
 	type: 'int32',
 	wire: 0,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const result = readVarint(state);
 		if (!result.ok) {
 			return result;
@@ -852,7 +805,7 @@ const INT64_SINGLETON: Int64Schema = {
 	kind: 'schema',
 	type: 'int64',
 	wire: 0,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const buf = state.b;
 		let pos = state.p;
 
@@ -914,7 +867,7 @@ const UINT32_SINGLETON: Uint32Schema = {
 	kind: 'schema',
 	type: 'uint32',
 	wire: 0,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const result = readVarint(state);
 		if (!result.ok) {
 			return result;
@@ -957,7 +910,7 @@ const UINT64_SINGLETON: Uint64Schema = {
 	kind: 'schema',
 	type: 'uint64',
 	wire: 0,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const buf = state.b;
 		let pos = state.p;
 
@@ -1007,7 +960,7 @@ const SINT32_SINGLETON: Sint32Schema = {
 	kind: 'schema',
 	type: 'sint32',
 	wire: 0,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const result = readVarint(state);
 		if (!result.ok) {
 			return result;
@@ -1050,7 +1003,7 @@ const SINT64_SINGLETON: Sint64Schema = {
 	kind: 'schema',
 	type: 'sint64',
 	wire: 0,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const buf = state.b;
 		let pos = state.p;
 
@@ -1101,7 +1054,7 @@ const FIXED32_SINGLETON: Fixed32Schema = {
 	kind: 'schema',
 	type: 'fixed32',
 	wire: 5,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const view = getDataView(state);
 		const value = view.getUint32(state.p, true);
 
@@ -1145,7 +1098,7 @@ const FIXED64_SINGLETON: Fixed64Schema = {
 	kind: 'schema',
 	type: 'fixed64',
 	wire: 1,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const view = getDataView(state);
 
 		// Read as two 32-bit values and combine into a BigInt
@@ -1196,7 +1149,7 @@ const SFIXED32_SINGLETON: Sfixed32Schema = {
 	kind: 'schema',
 	type: 'sfixed32',
 	wire: 5,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const view = getDataView(state);
 		const value = view.getInt32(state.p, true);
 
@@ -1240,7 +1193,7 @@ const SFIXED64_SINGLETON: Sfixed64Schema = {
 	kind: 'schema',
 	type: 'sfixed64',
 	wire: 1,
-	'~decode'(state, _flags) {
+	'~decode'(state) {
 		const view = getDataView(state);
 
 		// Read as two 32-bit values and combine into a BigInt
@@ -1312,7 +1265,7 @@ export const repeated = <TItem extends BaseSchema>(item: TItem | (() => TItem)):
 		get '~decode'() {
 			const shape = resolvedShape.value;
 
-			const decoder: Decoder = (state, flags) => {
+			const decoder: Decoder = (state) => {
 				const length = readVarint(state);
 				if (!length.ok) {
 					return length;
@@ -1335,18 +1288,13 @@ export const repeated = <TItem extends BaseSchema>(item: TItem | (() => TItem)):
 				let issues: IssueTree | undefined;
 
 				while (children.p < length.value) {
-					const r = shape['~decode'](children, flags);
+					const r = shape['~decode'](children);
 
-					if (r.ok) {
-						array.push(r.value);
-					} else {
-						issues = joinIssues(issues, prependPath(idx, r));
-
-						if (flags & FLAG_ABORT_EARLY) {
-							return issues;
-						}
+					if (!r.ok) {
+						return prependPath(idx, r);
 					}
 
+					array.push(r.value);
 					idx++;
 				}
 
@@ -1435,8 +1383,8 @@ export const optional: {
 		wrapped: wrapped,
 		default: defaultValue,
 		wire: wrapped.wire,
-		'~decode'(state, flags) {
-			return wrapped['~decode'](state, flags);
+		'~decode'(state) {
+			return wrapped['~decode'](state);
 		},
 		'~encode'(state, input) {
 			return wrapped['~encode'](state, input);
@@ -1583,7 +1531,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 			const shape = resolvedEntries.value;
 			const len = Object.keys(shape).length;
 
-			const decoder: Decoder = (state, flags) => {
+			const decoder: Decoder = (state) => {
 				let seenBits: BitSet = 0;
 				let seenCount = 0;
 
@@ -1594,12 +1542,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 				while (state.p < end) {
 					const prelude = readVarint(state);
 					if (!prelude.ok) {
-						issues = joinIssues(issues, prelude);
-						if (flags & FLAG_ABORT_EARLY) {
-							return issues;
-						}
-
-						break;
+						return prelude;
 					}
 
 					const magic = prelude.value;
@@ -1612,13 +1555,9 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 					if (!entry) {
 						const result = skipField(state, wire);
 						if (!result.ok) {
-							issues = joinIssues(issues, result);
-							if (flags & FLAG_ABORT_EARLY) {
-								return issues;
-							}
-
-							break;
+							return result;
 						}
+
 						continue;
 					}
 
@@ -1630,35 +1569,15 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 
 					// It doesn't match with our wire, file an issue
 					if (entry.wire !== wire) {
-						issues = joinIssues(issues, entry.wireIssue);
-						if (flags & FLAG_ABORT_EARLY) {
-							return issues;
-						}
-
-						const skip = skipField(state, wire);
-						if (!skip.ok) {
-							issues = joinIssues(issues, prependPath(entry.key, skip));
-							if (flags & FLAG_ABORT_EARLY) {
-								return issues;
-							}
-
-							break;
-						}
-
-						continue;
+						return entry.wireIssue;
 					}
 
 					// Decode the value
-					const result = entry.schema['~decode'](state, flags);
+					const result = entry.schema['~decode'](state);
 
 					// Failed to decode, file an issue
 					if (!result.ok) {
-						issues = joinIssues(issues, prependPath(entry.key, result));
-						if (flags & FLAG_ABORT_EARLY) {
-							return issues;
-						}
-
-						continue;
+						return prependPath(entry.key, result);
 					}
 
 					/*#__INLINE__*/ set(obj, entry.key, result.value);
@@ -1681,11 +1600,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 									/*#__INLINE__*/ set(obj, entry.key, defaultValue);
 								}
 							} else {
-								issues = joinIssues(issues, entry.missingIssue);
-
-								if (flags & FLAG_ABORT_EARLY) {
-									return issues;
-								}
+								return entry.missingIssue;
 							}
 						}
 					}
@@ -1703,7 +1618,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 		get '~decode'() {
 			const raw = this['~~decode'];
 
-			const decoder: Decoder = (state, flags) => {
+			const decoder: Decoder = (state) => {
 				const length = readVarint(state);
 				if (!length.ok) {
 					return length;
@@ -1720,7 +1635,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 					v: null,
 				};
 
-				return raw(child, flags);
+				return raw(child);
 			};
 
 			return lazyProperty(this, '~decode', decoder);
@@ -1834,8 +1749,8 @@ export const map = <TKey extends MapKeySchema, TValue extends MapValueSchema>(
 		key,
 		value,
 		get '~decode'() {
-			const decoder: Decoder = (state, flags) => {
-				const result = Schema['~decode'](state, flags);
+			const decoder: Decoder = (state) => {
+				const result = Schema['~decode'](state);
 				if (!result.ok) {
 					return result;
 				}

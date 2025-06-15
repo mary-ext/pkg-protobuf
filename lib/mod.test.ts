@@ -941,21 +941,12 @@ Deno.test('multiple validation errors', () => {
 	const result = p.tryDecode(Message, invalidData);
 	assert(!result.ok);
 
-	assertEquals(result.issues.length, 3); // field1, field2, and field3 have wrong wire types
-
-	const codes = result.issues.map((issue) => issue.code);
-	assert(codes.every((code) => code === 'invalid_wire'));
-
-	const fields = result.issues.map((issue) => issue.path[0]);
-	assertArrayIncludes(fields, ['field1', 'field2', 'field3']);
-
-	assertStringIncludes(result.message, '+2 other issue(s)');
+	assertEquals(result.message, 'invalid_wire at .field1 (expected wire type 2)');
 });
 
 Deno.test('missing required fields during decoding', () => {
 	const Message = p.message({
 		required1: p.string(),
-		required2: p.int32(),
 		optional: p.optional(p.string()),
 	}, {
 		required1: 1,
@@ -974,15 +965,7 @@ Deno.test('missing required fields during decoding', () => {
 
 	const result = p.tryDecode(Message, encoded);
 	assert(!result.ok);
-
-	const issues = result.issues;
-	assertEquals(issues.length, 2);
-
-	const missingCodes = issues.map((issue) => issue.code);
-	assertArrayIncludes(missingCodes, ['missing_value', 'missing_value']);
-
-	const missingKeys = issues.map((issue) => issue.path.join('.'));
-	assertArrayIncludes(missingKeys, ['required1', 'required2']);
+	assertEquals(result.message, 'missing_value at .required1 (required field is missing)');
 });
 
 Deno.test('empty buffer handling', () => {
@@ -1033,7 +1016,7 @@ Deno.test('buffer underrun during decoding', () => {
 	const result = p.tryDecode(Message, truncatedBuffer);
 
 	assert(!result.ok);
-	assertEquals(result.message, `unexpected_eof at .text (unexpected end of input) (+1 other issue(s))`);
+	assertEquals(result.message, `unexpected_eof at .text (unexpected end of input)`);
 });
 
 Deno.test('buffer underrun during varint reading', () => {
@@ -1048,7 +1031,7 @@ Deno.test('buffer underrun during varint reading', () => {
 	const result = p.tryDecode(Message, incompleteVarint);
 
 	assert(!result.ok);
-	assertEquals(result.message, `unexpected_eof at .value (unexpected end of input) (+1 other issue(s))`);
+	assertEquals(result.message, `unexpected_eof at .value (unexpected end of input)`);
 });
 
 // #endregion
