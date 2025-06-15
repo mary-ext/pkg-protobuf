@@ -1,11 +1,4 @@
-import {
-	assert,
-	assertAlmostEquals,
-	assertArrayIncludes,
-	assertEquals,
-	assertStringIncludes,
-	assertThrows,
-} from '@std/assert';
+import { assert, assertAlmostEquals, assertEquals, assertStringIncludes, assertThrows } from '@std/assert';
 import { nanoid } from 'nanoid/non-secure';
 
 import * as p from './mod.ts';
