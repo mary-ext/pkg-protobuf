@@ -9,24 +9,78 @@ Deno.test('string encoding/decoding', () => {
 	const Message = p.message({ text: p.string() }, { text: 1 });
 
 	const cases = [
-		'',
-		'hello world',
-		'hello 🚀',
-		'a'.repeat(1000),
-		'Café',
-		'おはようございます☀️',
-		'नमस्ते',
-		'Здравствуйте',
-		'你'.repeat(43),
-		'🌟'.repeat(32),
-		'🚀🌟💻',
-		'🏳️‍🌈🏳️‍⚧️',
+		{
+			text: '',
+			expected: Uint8Array.from([0x0a, 0x00]),
+		}, // field 1, length 0
+		{
+			text: 'hello world',
+			expected: Uint8Array.from([
+				0x0a,
+				0x0b,
+				0x68,
+				0x65,
+				0x6c,
+				0x6c,
+				0x6f,
+				0x20,
+				0x77,
+				0x6f,
+				0x72,
+				0x6c,
+				0x64,
+			]),
+		}, // field 1, length 11
+		{
+			text: 'hello 🚀',
+			expected: Uint8Array.from([0x0a, 0x0a, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0xf0, 0x9f, 0x9a, 0x80]),
+		}, // field 1, length 10, UTF-8 rocket
+		{
+			text: 'Café',
+			expected: Uint8Array.from([0x0a, 0x05, 0x43, 0x61, 0x66, 0xc3, 0xa9]),
+		}, // field 1, length 5, UTF-8 café
+
+		{
+			text: 'a'.repeat(1000),
+			expected: null,
+		},
+		{
+			text: 'おはようございます☀️',
+			expected: null,
+		},
+		{
+			text: 'नमस्ते',
+			expected: null,
+		},
+		{
+			text: 'Здравствуйте',
+			expected: null,
+		},
+		{
+			text: '你'.repeat(43),
+			expected: null,
+		},
+		{
+			text: '🌟'.repeat(32),
+			expected: null,
+		},
+		{
+			text: '🚀🌟💻',
+			expected: null,
+		},
+		{
+			text: '🏳️‍🌈🏳️‍⚧️',
+			expected: null,
+		},
 	];
 
-	for (const text of cases) {
+	for (const { text, expected } of cases) {
 		const encoded = p.encode(Message, { text });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { text });
 	}
 });
@@ -35,25 +89,67 @@ Deno.test('int32 encoding/decoding', () => {
 	const Message = p.message({ value: p.int32() }, { value: 1 });
 
 	const cases = [
-		0,
-		1,
-		-1,
-		127,
-		-128,
-		255,
-		-256,
-		32767,
-		-32768,
-		65535,
-		-65536,
-		2147483647, // max int32
-		-2147483648, // min int32
+		{ // field 1, varint 0
+			value: 0,
+			expected: Uint8Array.from([0x08, 0x00]),
+		},
+		{ // field 1, varint 1
+			value: 1,
+			expected: Uint8Array.from([0x08, 0x01]),
+		},
+		{ // field 1, varint -1 (int32)
+			value: -1,
+			expected: Uint8Array.from([0x08, 0xff, 0xff, 0xff, 0xff, 0x0f]),
+		},
+		{ // field 1, varint 127
+			value: 127,
+			expected: Uint8Array.from([0x08, 0x7f]),
+		},
+		{ // field 1, varint -128
+			value: -128,
+			expected: Uint8Array.from([0x08, 0x80, 0xff, 0xff, 0xff, 0x0f]),
+		},
+		{ // field 1, varint 255
+			value: 255,
+			expected: Uint8Array.from([0x08, 0xff, 0x01]),
+		},
+		{ // field 1, varint -256
+			value: -256,
+			expected: Uint8Array.from([0x08, 0x80, 0xfe, 0xff, 0xff, 0x0f]),
+		},
+		{ // field 1, varint 32767
+			value: 32767,
+			expected: Uint8Array.from([0x08, 0xff, 0xff, 0x01]),
+		},
+		{ // field 1, varint -32768
+			value: -32768,
+			expected: Uint8Array.from([0x08, 0x80, 0x80, 0xfe, 0xff, 0x0f]),
+		},
+		{ // field 1, varint 65535
+			value: 65535,
+			expected: Uint8Array.from([0x08, 0xff, 0xff, 0x03]),
+		},
+		{ // field 1, varint -65536
+			value: -65536,
+			expected: Uint8Array.from([0x08, 0x80, 0x80, 0xfc, 0xff, 0x0f]),
+		},
+		{ // max int32
+			value: 2147483647,
+			expected: null,
+		},
+		{ // min int32
+			value: -2147483648,
+			expected: null,
+		},
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -62,19 +158,43 @@ Deno.test('int64 encoding/decoding', () => {
 	const Message = p.message({ value: p.int64() }, { value: 1 });
 
 	const cases = [
-		0n,
-		1n,
-		-1n,
-		127n,
-		-128n,
-		9223372036854775807n, // max int64
-		-9223372036854775808n, // min int64
+		{ // field 1, varint 0
+			value: 0n,
+			expected: Uint8Array.from([0x08, 0x00]),
+		},
+		{ // field 1, varint 1
+			value: 1n,
+			expected: Uint8Array.from([0x08, 0x01]),
+		},
+		{ // field 1, varint -1 (int64)
+			value: -1n,
+			expected: Uint8Array.from([0x08, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]),
+		},
+		{ // field 1, varint 127
+			value: 127n,
+			expected: Uint8Array.from([0x08, 0x7f]),
+		},
+		{ // field 1, varint -128
+			value: -128n,
+			expected: Uint8Array.from([0x08, 0x80, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01]),
+		},
+		{ // max int64
+			value: 9223372036854775807n,
+			expected: null,
+		},
+		{ // min int64
+			value: -9223372036854775808n,
+			expected: null,
+		},
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -83,20 +203,23 @@ Deno.test('uint32 encoding/decoding', () => {
 	const Message = p.message({ value: p.uint32() }, { value: 1 });
 
 	const cases = [
-		0,
-		1,
-		127,
-		255,
-		32767,
-		65535,
-		2147483647,
-		4294967295, // max uint32
+		{ value: 0, expected: Uint8Array.from([0x08, 0x00]) }, // field 1, varint 0
+		{ value: 1, expected: Uint8Array.from([0x08, 0x01]) }, // field 1, varint 1
+		{ value: 127, expected: Uint8Array.from([0x08, 0x7f]) }, // field 1, varint 127
+		{ value: 255, expected: Uint8Array.from([0x08, 0xff, 0x01]) }, // field 1, varint 255
+		{ value: 32767, expected: Uint8Array.from([0x08, 0xff, 0xff, 0x01]) }, // field 1, varint 32767
+		{ value: 65535, expected: Uint8Array.from([0x08, 0xff, 0xff, 0x03]) }, // field 1, varint 65535
+		{ value: 2147483647, expected: Uint8Array.from([0x08, 0xff, 0xff, 0xff, 0xff, 0x07]) }, // field 1, varint max int32
+		{ value: 4294967295, expected: Uint8Array.from([0x08, 0xff, 0xff, 0xff, 0xff, 0x0f]) }, // max uint32
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -105,17 +228,20 @@ Deno.test('uint64 encoding/decoding', () => {
 	const Message = p.message({ value: p.uint64() }, { value: 1 });
 
 	const cases = [
-		0n,
-		1n,
-		127n,
-		255n,
-		18446744073709551615n, // max uint64
+		{ value: 0n, expected: Uint8Array.from([0x08, 0x00]) }, // field 1, varint 0
+		{ value: 1n, expected: Uint8Array.from([0x08, 0x01]) }, // field 1, varint 1
+		{ value: 127n, expected: Uint8Array.from([0x08, 0x7f]) }, // field 1, varint 127
+		{ value: 255n, expected: Uint8Array.from([0x08, 0xff, 0x01]) }, // field 1, varint 255
+		{ value: 18446744073709551615n, expected: null }, // max uint64
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -124,21 +250,24 @@ Deno.test('sint32 encoding/decoding (zigzag)', () => {
 	const schema = p.message({ value: p.sint32() }, { value: 1 });
 
 	const testCases = [
-		0,
-		1,
-		-1,
-		2,
-		-2,
-		127,
-		-128,
-		2147483647, // max int32
-		-2147483648, // min int32
+		{ value: 0, expected: Uint8Array.from([0x08, 0x00]) }, // field 1, zigzag 0 -> varint 0
+		{ value: 1, expected: Uint8Array.from([0x08, 0x02]) }, // field 1, zigzag 1 -> varint 2
+		{ value: -1, expected: Uint8Array.from([0x08, 0x01]) }, // field 1, zigzag -1 -> varint 1
+		{ value: 2, expected: Uint8Array.from([0x08, 0x04]) }, // field 1, zigzag 2 -> varint 4
+		{ value: -2, expected: Uint8Array.from([0x08, 0x03]) }, // field 1, zigzag -2 -> varint 3
+		{ value: 127, expected: Uint8Array.from([0x08, 0xfe, 0x01]) }, // field 1, zigzag 127 -> varint 254
+		{ value: -128, expected: Uint8Array.from([0x08, 0xff, 0x01]) }, // field 1, zigzag -128 -> varint 255
+		{ value: 2147483647, expected: null }, // max int32
+		{ value: -2147483648, expected: null }, // min int32
 	];
 
-	for (const value of testCases) {
+	for (const { value, expected } of testCases) {
 		const encoded = p.encode(schema, { value });
-		const decoded = p.decode(schema, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(schema, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -147,21 +276,24 @@ Deno.test('sint64 encoding/decoding (zigzag)', () => {
 	const Message = p.message({ value: p.sint64() }, { value: 1 });
 
 	const cases = [
-		0n,
-		1n,
-		-1n,
-		2n,
-		-2n,
-		127n,
-		-128n,
-		9223372036854775807n, // max int64
-		-9223372036854775808n, // min int64
+		{ value: 0n, expected: Uint8Array.from([0x08, 0x00]) }, // field 1, zigzag 0 -> varint 0
+		{ value: 1n, expected: Uint8Array.from([0x08, 0x02]) }, // field 1, zigzag 1 -> varint 2
+		{ value: -1n, expected: Uint8Array.from([0x08, 0x01]) }, // field 1, zigzag -1 -> varint 1
+		{ value: 2n, expected: Uint8Array.from([0x08, 0x04]) }, // field 1, zigzag 2 -> varint 4
+		{ value: -2n, expected: Uint8Array.from([0x08, 0x03]) }, // field 1, zigzag -2 -> varint 3
+		{ value: 127n, expected: Uint8Array.from([0x08, 0xfe, 0x01]) }, // field 1, zigzag 127 -> varint 254
+		{ value: -128n, expected: Uint8Array.from([0x08, 0xff, 0x01]) }, // field 1, zigzag -128 -> varint 255
+		{ value: 9223372036854775807n, expected: null }, // max int64
+		{ value: -9223372036854775808n, expected: null }, // min int64
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -170,22 +302,26 @@ Deno.test('float encoding/decoding', () => {
 	const Message = p.message({ value: p.float() }, { value: 1 });
 
 	const cases = [
-		0.0,
-		1.0,
-		-1.0,
-		3.14159,
-		-3.14159,
-		1.5e10,
-		-1.5e10,
-		3.4028235e38, // close to max float32
-		1.175494e-38, // close to min positive float32
-		Infinity,
-		-Infinity,
-		NaN,
+		{ value: 0.0, expected: Uint8Array.from([0x0d, 0x00, 0x00, 0x00, 0x00]) }, // field 1, float32 0.0 (little-endian)
+		{ value: 1.0, expected: Uint8Array.from([0x0d, 0x00, 0x00, 0x80, 0x3f]) }, // field 1, float32 1.0 (little-endian)
+		{ value: -1.0, expected: Uint8Array.from([0x0d, 0x00, 0x00, 0x80, 0xbf]) }, // field 1, float32 -1.0 (little-endian)
+		{ value: 3.14159, expected: null },
+		{ value: -3.14159, expected: null },
+		{ value: 1.5e10, expected: null },
+		{ value: -1.5e10, expected: null },
+		{ value: 3.4028235e38, expected: null }, // close to max float32
+		{ value: 1.175494e-38, expected: null }, // close to min positive float32
+		{ value: Infinity, expected: null },
+		{ value: -Infinity, expected: null },
+		{ value: NaN, expected: null },
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
+
 		const decoded = p.decode(Message, encoded);
 
 		// Special handling for infinity values
@@ -205,22 +341,55 @@ Deno.test('double encoding/decoding', () => {
 	const Message = p.message({ value: p.double() }, { value: 1 });
 
 	const cases = [
-		0.0,
-		1.0,
-		-1.0,
-		3.141592653589793,
-		-3.141592653589793,
-		1.7976931348623157e+308, // close to max double
-		2.2250738585072014e-308, // close to min positive double
-		Infinity,
-		-Infinity,
-		NaN,
+		{ // field 1, double 0.0 (little-endian)
+			value: 0.0,
+			expected: Uint8Array.from([0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, double 1.0 (little-endian)
+			value: 1.0,
+			expected: Uint8Array.from([0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f]),
+		},
+		{ // field 1, double -1.0 (little-endian)
+			value: -1.0,
+			expected: Uint8Array.from([0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0xbf]),
+		},
+		{
+			value: 3.141592653589793,
+			expected: null,
+		},
+		{
+			value: -3.141592653589793,
+			expected: null,
+		},
+		{ // close to max double
+			value: 1.7976931348623157e+308,
+			expected: null,
+		},
+		{ // close to min positive double
+			value: 2.2250738585072014e-308,
+			expected: null,
+		},
+		{
+			value: Infinity,
+			expected: null,
+		},
+		{
+			value: -Infinity,
+			expected: null,
+		},
+		{
+			value: NaN,
+			expected: null,
+		},
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -283,12 +452,16 @@ Deno.test('double range validation', () => {
 Deno.test('boolean encoding/decoding', () => {
 	const Message = p.message({ value: p.boolean() }, { value: 1 });
 
-	const cases = [true, false];
+	const cases = [
+		{ value: true, expected: Uint8Array.from([0x08, 0x01]) }, // field 1, varint 1
+		{ value: false, expected: Uint8Array.from([0x08, 0x00]) }, // field 1, varint 0
+	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		assertEquals(encoded, expected);
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -297,17 +470,35 @@ Deno.test('bytes encoding/decoding', () => {
 	const Message = p.message({ data: p.bytes() }, { data: 1 });
 
 	const cases = [
-		Uint8Array.from([]),
-		Uint8Array.from([0]),
-		Uint8Array.from([1, 2, 3, 4, 5]),
-		Uint8Array.from([255, 254, 253]),
-		new Uint8Array(Array.from({ length: 1000 }, (_, i) => i % 256)), // large array
+		{ // field 1, length 0
+			data: new Uint8Array(0),
+			expected: Uint8Array.from([0x0a, 0x00]),
+		},
+		{ // field 1, length 1, byte 0
+			data: Uint8Array.from([0]),
+			expected: Uint8Array.from([0x0a, 0x01, 0x00]),
+		},
+		{ // field 1, length 5
+			data: Uint8Array.from([1, 2, 3, 4, 5]),
+			expected: Uint8Array.from([0x0a, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05]),
+		},
+		{ // field 1, length 3
+			data: Uint8Array.from([255, 254, 253]),
+			expected: Uint8Array.from([0x0a, 0x03, 0xff, 0xfe, 0xfd]),
+		},
+		{ // large array
+			data: new Uint8Array(Array.from({ length: 1000 }, (_, i) => i % 256)),
+			expected: null,
+		},
 	];
 
-	for (const data of cases) {
+	for (const { data, expected } of cases) {
 		const encoded = p.encode(Message, { data });
-		const decoded = p.decode(Message, encoded);
+		if (expected !== null) {
+			assertEquals(encoded, expected);
+		}
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { data });
 	}
 });
@@ -316,17 +507,33 @@ Deno.test('fixed32 encoding/decoding', () => {
 	const Message = p.message({ value: p.fixed32() }, { value: 1 });
 
 	const cases = [
-		0,
-		1,
-		255,
-		65535,
-		4294967295, // max uint32
+		{ // field 1, fixed32 0 (little-endian)
+			value: 0,
+			expected: Uint8Array.from([0x0d, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, fixed32 1 (little-endian)
+			value: 1,
+			expected: Uint8Array.from([0x0d, 0x01, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, fixed32 255 (little-endian)
+			value: 255,
+			expected: Uint8Array.from([0x0d, 0xff, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, fixed32 65535 (little-endian)
+			value: 65535,
+			expected: Uint8Array.from([0x0d, 0xff, 0xff, 0x00, 0x00]),
+		},
+		{ // field 1, fixed32 max uint32 (little-endian)
+			value: 4294967295,
+			expected: Uint8Array.from([0x0d, 0xff, 0xff, 0xff, 0xff]),
+		},
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		assertEquals(encoded, expected);
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -335,17 +542,33 @@ Deno.test('fixed64 encoding/decoding', () => {
 	const Message = p.message({ value: p.fixed64() }, { value: 1 });
 
 	const cases = [
-		0n,
-		1n,
-		255n,
-		65535n,
-		18446744073709551615n, // max uint64
+		{ // field 1, fixed64 0 (little-endian)
+			value: 0n,
+			expected: Uint8Array.from([0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, fixed64 1 (little-endian)
+			value: 1n,
+			expected: Uint8Array.from([0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, fixed64 255 (little-endian)
+			value: 255n,
+			expected: Uint8Array.from([0x09, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, fixed64 65535 (little-endian)
+			value: 65535n,
+			expected: Uint8Array.from([0x09, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, fixed64 max uint64 (little-endian)
+			value: 18446744073709551615n,
+			expected: Uint8Array.from([0x09, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+		},
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		assertEquals(encoded, expected);
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -354,17 +577,18 @@ Deno.test('sfixed32 encoding/decoding', () => {
 	const Message = p.message({ value: p.sfixed32() }, { value: 1 });
 
 	const cases = [
-		0,
-		1,
-		-1,
-		2147483647, // max int32
-		-2147483648, // min int32
+		{ value: 0, expected: Uint8Array.from([0x0d, 0x00, 0x00, 0x00, 0x00]) }, // field 1, sfixed32 0 (little-endian)
+		{ value: 1, expected: Uint8Array.from([0x0d, 0x01, 0x00, 0x00, 0x00]) }, // field 1, sfixed32 1 (little-endian)
+		{ value: -1, expected: Uint8Array.from([0x0d, 0xff, 0xff, 0xff, 0xff]) }, // field 1, sfixed32 -1 (little-endian, two's complement)
+		{ value: 2147483647, expected: Uint8Array.from([0x0d, 0xff, 0xff, 0xff, 0x7f]) }, // field 1, sfixed32 max int32 (little-endian)
+		{ value: -2147483648, expected: Uint8Array.from([0x0d, 0x00, 0x00, 0x00, 0x80]) }, // field 1, sfixed32 min int32 (little-endian)
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		assertEquals(encoded, expected);
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -373,17 +597,33 @@ Deno.test('sfixed64 encoding/decoding', () => {
 	const Message = p.message({ value: p.sfixed64() }, { value: 1 });
 
 	const cases = [
-		0n,
-		1n,
-		-1n,
-		9223372036854775807n, // max int64
-		-9223372036854775808n, // min int64
+		{ // field 1, sfixed64 0 (little-endian)
+			value: 0n,
+			expected: Uint8Array.from([0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, sfixed64 1 (little-endian)
+			value: 1n,
+			expected: Uint8Array.from([0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]),
+		},
+		{ // field 1, sfixed64 -1 (little-endian, two's complement)
+			value: -1n,
+			expected: Uint8Array.from([0x09, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]),
+		},
+		{ // field 1, sfixed64 max int64 (little-endian)
+			value: 9223372036854775807n,
+			expected: Uint8Array.from([0x09, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f]),
+		},
+		{ // field 1, sfixed64 min int64 (little-endian)
+			value: -9223372036854775808n,
+			expected: Uint8Array.from([0x09, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80]),
+		},
 	];
 
-	for (const value of cases) {
+	for (const { value, expected } of cases) {
 		const encoded = p.encode(Message, { value });
-		const decoded = p.decode(Message, encoded);
+		assertEquals(encoded, expected);
 
+		const decoded = p.decode(Message, encoded);
 		assertEquals(decoded, { value });
 	}
 });
@@ -395,23 +635,31 @@ Deno.test('sfixed64 encoding/decoding', () => {
 Deno.test('repeated fields', () => {
 	const cases = [
 		{
-			numbers: [],
-			strings: [],
+			data: { numbers: [], strings: [] },
+			unpacked: new Uint8Array(0), // empty message
+			packed: Uint8Array.from([0x08, 0x00, 0x12, 0x00]), // field 1: tag + length 0, field 2: tag + length 0
 		},
 		{
-			numbers: [1],
-			strings: ['hello'],
+			data: { numbers: [1], strings: ['hello'] },
+			unpacked: Uint8Array.from([0x08, 0x01, 0x12, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f]), // field 1: varint 1, field 2: length 5 + "hello"
+			packed: Uint8Array.from([0x08, 0x01, 0x01, 0x12, 0x06, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f]), // field 1: tag + length 1 + varint 1, field 2: tag + length 6 + (length 5 + "hello")
 		},
 		{
-			numbers: [1, 2, 3, -1, -2],
-			strings: ['hello', 'world', ''],
+			data: { numbers: [1, 2, 3], strings: ['hi'] },
+			unpacked: Uint8Array.from([0x08, 0x01, 0x08, 0x02, 0x08, 0x03, 0x12, 0x02, 0x68, 0x69]), // field 1: 1,2,3, field 2: "hi"
+			packed: Uint8Array.from([0x08, 0x03, 0x01, 0x02, 0x03, 0x12, 0x03, 0x02, 0x68, 0x69]), // field 1: tag + length 3 + varints 1,2,3, field 2: tag + length 3 + (length 2 + "hi")
 		},
 		{
-			numbers: Array.from({ length: 100 }, (_, i) => i),
-			strings: Array.from({ length: 100 }, (_, i) => `item${i}`),
+			data: {
+				numbers: Array.from({ length: 100 }, (_, i) => i),
+				strings: Array.from({ length: 100 }, (_, i) => `item${i}`),
+			},
+			unpacked: null, // too large for expected bytes
+			packed: null, // too large for expected bytes
 		},
 	];
 
+	// Test non-packed repeated fields
 	{
 		const Message = p.message({
 			numbers: p.repeated(p.int32(), false),
@@ -421,14 +669,18 @@ Deno.test('repeated fields', () => {
 			strings: 2,
 		});
 
-		for (const data of cases) {
+		for (const { data, unpacked } of cases) {
 			const encoded = p.encode(Message, data);
-			const decoded = p.decode(Message, encoded);
+			if (unpacked !== null) {
+				assertEquals(encoded, unpacked);
+			}
 
+			const decoded = p.decode(Message, encoded);
 			assertEquals(decoded, data);
 		}
 	}
 
+	// Test packed repeated fields (different wire format)
 	{
 		const Message = p.message({
 			numbers: p.repeated(p.int32(), true),
@@ -438,10 +690,13 @@ Deno.test('repeated fields', () => {
 			strings: 2,
 		});
 
-		for (const data of cases) {
+		for (const { data, packed } of cases) {
 			const encoded = p.encode(Message, data);
-			const decoded = p.decode(Message, encoded);
+			if (packed !== null) {
+				assertEquals(encoded, packed);
+			}
 
+			const decoded = p.decode(Message, encoded);
 			assertEquals(decoded, data);
 		}
 	}
@@ -460,48 +715,102 @@ Deno.test('messages with optional fields', () => {
 		withoutDefault: 4,
 	});
 
-	{
-		const full = {
-			required: 'hello',
-			withDefault: 'custom',
-			withFunctionDefault: 99,
-			withoutDefault: 'present',
-		};
+	const cases = [
+		{
+			data: {
+				required: 'hello',
+				withDefault: 'custom',
+				withFunctionDefault: 99,
+				withoutDefault: 'present',
+			},
+			expected: Uint8Array.from([
+				0x0a,
+				0x05,
+				0x68,
+				0x65,
+				0x6c,
+				0x6c,
+				0x6f, // field 1: "hello"
+				0x12,
+				0x06,
+				0x63,
+				0x75,
+				0x73,
+				0x74,
+				0x6f,
+				0x6d, // field 2: "custom"
+				0x18,
+				0x63, // field 3: varint 99
+				0x22,
+				0x07,
+				0x70,
+				0x72,
+				0x65,
+				0x73,
+				0x65,
+				0x6e,
+				0x74, // field 4: "present"
+			]),
+		},
+		{
+			data: { required: 'hello' },
+			expected: Uint8Array.from([0x0a, 0x05, 0x68, 0x65, 0x6c, 0x6c, 0x6f]), // field 1: "hello" only
+		},
+		{
+			data: {
+				required: 'hello',
+				withDefault: 'custom_value',
+			},
+			expected: Uint8Array.from([
+				0x0a,
+				0x05,
+				0x68,
+				0x65,
+				0x6c,
+				0x6c,
+				0x6f, // field 1: "hello"
+				0x12,
+				0x0c,
+				0x63,
+				0x75,
+				0x73,
+				0x74,
+				0x6f,
+				0x6d,
+				0x5f,
+				0x76,
+				0x61,
+				0x6c,
+				0x75,
+				0x65, // field 2: "custom_value"
+			]),
+		},
+	];
 
-		const encoded = p.encode(Message, full);
+	for (const { data, expected } of cases) {
+		const encoded = p.encode(Message, data);
+		assertEquals(encoded, expected);
+
 		const decoded = p.decode(Message, encoded);
 
-		assertEquals(decoded, full);
-	}
-	{
-		const minimal = { required: 'hello' };
-
-		const encoded = p.encode(Message, minimal);
-		const decoded = p.decode(Message, encoded);
-
-		assertEquals(decoded, {
-			required: 'hello',
-			withDefault: 'default_value',
-			withFunctionDefault: 42,
-			// withoutDefault should be undefined (not present)
-		});
-	}
-
-	{
-		const partial = {
-			required: 'hello',
-			withDefault: 'custom_value',
-		};
-
-		const encoded = p.encode(Message, partial);
-		const decoded = p.decode(Message, encoded);
-
-		assertEquals(decoded, {
-			required: 'hello',
-			withDefault: 'custom_value',
-			withFunctionDefault: 42,
-			// withoutDefault should be undefined (not present)
-		});
+		// Handle default values in decoded output
+		if (!data.withDefault && !data.withFunctionDefault && !data.withoutDefault) {
+			assertEquals(decoded, {
+				required: data.required,
+				withDefault: 'default_value',
+				withFunctionDefault: 42,
+				// withoutDefault should be undefined (not present)
+			});
+		} else if (!data.withFunctionDefault && !data.withoutDefault) {
+			assertEquals(decoded, {
+				required: data.required,
+				withDefault: data.withDefault,
+				withFunctionDefault: 42,
+				// withoutDefault should be undefined (not present)
+			});
+		} else {
+			assertEquals(decoded, data);
+		}
 	}
 });
 
@@ -511,57 +820,86 @@ Deno.test('empty messages', () => {
 	const encoded = p.encode(Message, {});
 	const decoded = p.decode(Message, encoded);
 
+	// Empty message should encode to empty buffer
+	assertEquals(encoded, new Uint8Array(0));
 	assertEquals(decoded, {});
 });
 
 Deno.test('nested messages', () => {
-	const Address = p.message({
-		street: p.string(),
-		city: p.string(),
-		zipCode: p.optional(p.string()),
-	}, {
-		street: 1,
-		city: 2,
-		zipCode: 3,
-	});
+	{
+		const Simple = p.message({
+			inner: p.optional(p.message({ value: p.int32() }, { value: 1 })),
+		}, { inner: 2 });
 
-	const Person = p.message({
-		name: p.string(),
-		age: p.int32(),
-		address: Address,
-		addresses: p.repeated(Address),
-	}, {
-		name: 1,
-		age: 2,
-		address: 3,
-		addresses: 4,
-	});
-
-	const data = {
-		name: 'John Doe',
-		age: 30,
-		address: {
-			street: '123 Main St',
-			city: 'Anytown',
-			zipCode: '12345',
-		},
-		addresses: [
+		const cases = [
 			{
-				street: '456 Oak Ave',
-				city: 'Other City',
+				data: { inner: { value: 42 } },
+				expected: Uint8Array.from([0x12, 0x02, 0x08, 0x2a]), // field 2: length 2, field 1: varint 42
 			},
 			{
-				street: '789 Pine Rd',
-				city: 'Another City',
-				zipCode: '67890',
+				data: {},
+				expected: new Uint8Array(0), // empty message
 			},
-		],
-	};
+		];
 
-	const encoded = p.encode(Person, data);
-	const decoded = p.decode(Person, encoded);
+		for (const { data, expected } of cases) {
+			const encoded = p.encode(Simple, data);
+			assertEquals(encoded, expected);
 
-	assertEquals(decoded, data);
+			const decoded = p.decode(Simple, encoded);
+			assertEquals(decoded, data);
+		}
+	}
+
+	{
+		const Address = p.message({
+			street: p.string(),
+			city: p.string(),
+			zipCode: p.optional(p.string()),
+		}, {
+			street: 1,
+			city: 2,
+			zipCode: 3,
+		});
+
+		const Person = p.message({
+			name: p.string(),
+			age: p.int32(),
+			address: Address,
+			addresses: p.repeated(Address),
+		}, {
+			name: 1,
+			age: 2,
+			address: 3,
+			addresses: 4,
+		});
+
+		const data = {
+			name: 'John Doe',
+			age: 30,
+			address: {
+				street: '123 Main St',
+				city: 'Anytown',
+				zipCode: '12345',
+			},
+			addresses: [
+				{
+					street: '456 Oak Ave',
+					city: 'Other City',
+				},
+				{
+					street: '789 Pine Rd',
+					city: 'Another City',
+					zipCode: '67890',
+				},
+			],
+		};
+
+		const encoded = p.encode(Person, data);
+		const decoded = p.decode(Person, encoded);
+
+		assertEquals(decoded, data);
+	}
 });
 
 Deno.test('self-referential messages', () => {
@@ -817,40 +1155,6 @@ Deno.test('duplicate field handling', () => {
 	const decoded = p.decode(Message, buffer);
 
 	assertEquals(decoded, { value: 24 });
-});
-
-Deno.test('encoding produces correct wire format', () => {
-	// Test that our encoding matches expected protobuf wire format
-	const schema = p.message({
-		a: p.int32(),
-		b: p.string(),
-	}, {
-		a: 1,
-		b: 2,
-	});
-
-	const encoded = p.encode(schema, { a: 150, b: 'testing' });
-
-	// Manual verification of wire format:
-	// Field 1 (a=150): tag=1<<3|0=8, value=150 (varint) = [8, 150, 1]
-	// Field 2 (b="testing"): tag=2<<3|2=18, length=7, "testing" = [18, 7, 116, 101, 115, 116, 105, 110, 103]
-
-	const expected = Uint8Array.from([
-		8,
-		150,
-		1, // field 1: int32 value 150
-		18,
-		7,
-		116,
-		101,
-		115,
-		116,
-		105,
-		110,
-		103, // field 2: string "testing"
-	]);
-
-	assertEquals(encoded, expected);
 });
 
 // #endregion
