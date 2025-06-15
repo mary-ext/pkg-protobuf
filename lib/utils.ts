@@ -80,3 +80,7 @@ export const encodeUtf8Into = (to: Uint8Array, str: string, offset?: number, len
 
 	return result.written || 0;
 };
+
+export const assertUnreachable = (): never => {
+	throw new Error(`not implemented`);
+};

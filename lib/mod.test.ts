@@ -400,14 +400,6 @@ Deno.test('sfixed64 encoding/decoding', () => {
 // #region Complex types
 
 Deno.test('repeated fields', () => {
-	const Message = p.message({
-		numbers: p.repeated(p.int32()),
-		strings: p.repeated(p.string()),
-	}, {
-		numbers: 1,
-		strings: 2,
-	});
-
 	const cases = [
 		{
 			numbers: [],
@@ -427,11 +419,38 @@ Deno.test('repeated fields', () => {
 		},
 	];
 
-	for (const data of cases) {
-		const encoded = p.encode(Message, data);
-		const decoded = p.decode(Message, encoded);
+	{
+		const Message = p.message({
+			numbers: p.repeated(p.int32(), false),
+			strings: p.repeated(p.string(), false),
+		}, {
+			numbers: 1,
+			strings: 2,
+		});
 
-		assertEquals(decoded, data);
+		for (const data of cases) {
+			const encoded = p.encode(Message, data);
+			const decoded = p.decode(Message, encoded);
+
+			assertEquals(decoded, data);
+		}
+	}
+
+	{
+		const Message = p.message({
+			numbers: p.repeated(p.int32(), true),
+			strings: p.repeated(p.string(), true),
+		}, {
+			numbers: 1,
+			strings: 2,
+		});
+
+		for (const data of cases) {
+			const encoded = p.encode(Message, data);
+			const decoded = p.decode(Message, encoded);
+
+			assertEquals(decoded, data);
+		}
 	}
 });
 
@@ -610,19 +629,39 @@ Deno.test('map type', () => {
 		name: 2,
 	});
 
+	const PersonMap = p.map(p.string(), Person);
+	type PersonMap = p.InferInput<typeof PersonMap>;
+
 	const Message = p.message({
-		map: p.map(p.string(), Person),
+		map: PersonMap,
 	}, {
 		map: 1,
 	});
 
-	const cases = [
-		new Map(),
-		new Map([['item1', { id: 1, name: 'first' }]]),
-		new Map([['item1', { id: 1, name: 'first' }], ['item2', { id: 2, name: 'second' }]]),
-	];
+	{
+		const map: PersonMap = [];
 
-	for (const map of cases) {
+		const encoded = p.encode(Message, { map });
+		const decoded = p.decode(Message, encoded);
+
+		assertEquals(decoded, { map });
+	}
+
+	{
+		const map: PersonMap = [{ key: 'item1', value: { id: 1, name: 'first' } }];
+
+		const encoded = p.encode(Message, { map });
+		const decoded = p.decode(Message, encoded);
+
+		assertEquals(decoded, { map });
+	}
+
+	{
+		const map: PersonMap = [
+			{ key: 'item1', value: { id: 1, name: 'first' } },
+			{ key: 'item2', value: { id: 2, name: 'second' } },
+		];
+
 		const encoded = p.encode(Message, { map });
 		const decoded = p.decode(Message, encoded);
 
@@ -1082,14 +1121,25 @@ Deno.test('round-trip consistency stress test', () => {
 });
 
 Deno.test('very large arrays', () => {
-	const Message = p.message({ strings: p.repeated(p.string()) }, { strings: 1 });
-
 	const strings = Array.from({ length: 10000 }, () => nanoid(8));
 
-	const encoded = p.encode(Message, { strings });
-	const decoded = p.decode(Message, encoded);
+	{
+		const Message = p.message({ strings: p.repeated(p.string(), false) }, { strings: 1 });
 
-	assertEquals(decoded, { strings });
+		const encoded = p.encode(Message, { strings });
+		const decoded = p.decode(Message, encoded);
+
+		assertEquals(decoded, { strings });
+	}
+
+	{
+		const Message = p.message({ strings: p.repeated(p.string(), true) }, { strings: 1 });
+
+		const encoded = p.encode(Message, { strings });
+		const decoded = p.decode(Message, encoded);
+
+		assertEquals(decoded, { strings });
+	}
 });
 
 Deno.test('large string handling', () => {

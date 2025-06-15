@@ -17,7 +17,6 @@ type InputType =
 	| 'bigint'
 	| 'boolean'
 	| 'bytes'
-	| 'map'
 	| 'number'
 	| 'object'
 	| 'string';
@@ -55,7 +54,6 @@ const ARRAY_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected:
 const BIGINT_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected: 'bigint' };
 const BOOLEAN_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected: 'boolean' };
 const BYTES_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected: 'bytes' };
-const MAP_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected: 'map' };
 const NUMBER_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected: 'number' };
 const OBJECT_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected: 'object' };
 const STRING_TYPE_ISSUE: IssueLeaf = { ok: false, code: 'invalid_type', expected: 'string' };
@@ -501,9 +499,9 @@ type kObjectType = typeof kObjectType;
 
 type RawResult<T = unknown> = Ok<T> | IssueTree;
 
-type Decoder = (this: void, state: DecoderState) => RawResult;
+type Decoder = (state: DecoderState) => RawResult;
 
-type Encoder = (this: void, state: EncoderState, input: unknown) => IssueTree | void;
+type Encoder = (state: EncoderState, input: unknown) => IssueTree | void;
 
 export interface BaseSchema<TInput = unknown, TOutput = TInput> {
 	readonly kind: 'schema';
@@ -1236,9 +1234,10 @@ export const sfixed64 = (): Sfixed64Schema => {
 };
 
 // #region Repeated schema
-export interface RepeatedSchema<TItem extends BaseSchema> extends BaseSchema<unknown[]> {
+export interface RepeatedSchema<TItem extends BaseSchema = BaseSchema> extends BaseSchema<unknown[]> {
 	readonly type: 'repeated';
-	readonly wire: 2;
+	readonly packed: boolean;
+	readonly wire: WireType;
 	readonly item: TItem;
 
 	readonly [kObjectType]?: { in: InferInput<TItem>[]; out: InferOutput<TItem>[] };
@@ -1250,7 +1249,10 @@ export interface RepeatedSchema<TItem extends BaseSchema> extends BaseSchema<unk
  * @returns repeated schema
  */
 // #__NO_SIDE_EFFECTS__
-export const repeated = <TItem extends BaseSchema>(item: TItem | (() => TItem)): RepeatedSchema<TItem> => {
+export const repeated = <TItem extends BaseSchema>(
+	item: TItem | (() => TItem),
+	packed = false, // Default to non-packed for compatibility
+): RepeatedSchema<TItem> => {
 	const resolvedShape = lazy(() => {
 		return typeof item === 'function' ? item() : item;
 	});
@@ -1258,7 +1260,10 @@ export const repeated = <TItem extends BaseSchema>(item: TItem | (() => TItem)):
 	return {
 		kind: 'schema',
 		type: 'repeated',
-		wire: 2,
+		packed: packed,
+		get wire() {
+			return lazyProperty(this, 'wire', resolvedShape.value.wire);
+		},
 		get item() {
 			return lazyProperty(this, 'item', resolvedShape.value);
 		},
@@ -1266,43 +1271,7 @@ export const repeated = <TItem extends BaseSchema>(item: TItem | (() => TItem)):
 			const shape = resolvedShape.value;
 
 			const decoder: Decoder = (state) => {
-				const length = readVarint(state);
-				if (!length.ok) {
-					return length;
-				}
-
-				const bytes = readBytes(state, length.value);
-				if (!bytes.ok) {
-					return bytes;
-				}
-
-				const children: DecoderState = {
-					b: bytes.value,
-					p: 0,
-					v: null,
-				};
-
-				const array: any[] = [];
-
-				let idx = 0;
-				let issues: IssueTree | undefined;
-
-				while (children.p < length.value) {
-					const r = shape['~decode'](children);
-
-					if (!r.ok) {
-						return prependPath(idx, r);
-					}
-
-					array.push(r.value);
-					idx++;
-				}
-
-				if (issues !== undefined) {
-					return issues;
-				}
-
-				return { ok: true, value: array };
+				return lazyProperty(this, '~decode', shape['~decode'])(state);
 			};
 
 			return lazyProperty(this, '~decode', decoder);
@@ -1311,35 +1280,16 @@ export const repeated = <TItem extends BaseSchema>(item: TItem | (() => TItem)):
 			const shape = resolvedShape.value;
 
 			const encoder: Encoder = (state, input) => {
-				if (!Array.isArray(input)) {
-					return ARRAY_TYPE_ISSUE;
-				}
-
-				const children: EncoderState = {
-					c: [],
-					b: new Uint8Array(CHUNK_SIZE),
-					v: null,
-					p: 0,
-					l: 0,
-				};
-
-				for (let idx = 0, len = input.length; idx < len; idx++) {
-					const result = shape['~encode'](children, input[idx]);
-
-					if (result) {
-						return prependPath(idx, result);
-					}
-				}
-
-				const packed = finishEncode(children);
-
-				writeVarint(state, packed.length);
-				writeBytes(state, packed);
+				return lazyProperty(this, '~encode', shape['~encode'])(state, input);
 			};
 
 			return lazyProperty(this, '~encode', encoder);
 		},
 	};
+};
+
+const isRepeatedSchema = (schema: BaseSchema): schema is RepeatedSchema<any> => {
+	return schema.type === 'repeated';
 };
 
 // #region Optional schema
@@ -1382,12 +1332,14 @@ export const optional: {
 		type: 'optional',
 		wrapped: wrapped,
 		default: defaultValue,
-		wire: wrapped.wire,
+		get 'wire'() {
+			return lazyProperty(this, 'wire', wrapped.wire);
+		},
 		'~decode'(state) {
-			return wrapped['~decode'](state);
+			return lazyProperty(this, '~decode', wrapped['~decode'])(state);
 		},
 		'~encode'(state, input) {
-			return wrapped['~encode'](state, input);
+			return lazyProperty(this, '~encode', wrapped['~encode'])(state, input);
 		},
 	};
 };
@@ -1457,6 +1409,8 @@ interface MessageEntry {
 	wire: WireType;
 
 	optional: boolean;
+	repeated: boolean;
+	packed: boolean;
 
 	wireIssue: IssueTree;
 	missingIssue: IssueTree;
@@ -1494,12 +1448,27 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 			const schema = obj[key];
 			const tag = tags[key];
 
+			let innerSchema = schema;
+
+			const isOptional = isOptionalSchema(innerSchema);
+			if (isOptional) {
+				innerSchema = (innerSchema as OptionalSchema).wrapped;
+			}
+
+			const isRepeated = isRepeatedSchema(innerSchema);
+			const isPacked = isRepeated && (innerSchema as RepeatedSchema).packed;
+			if (isRepeated) {
+				innerSchema = (innerSchema as RepeatedSchema).item;
+			}
+
 			resolved[tag] = {
 				key: key,
 				schema: schema,
 				tag: tag,
 				wire: schema.wire,
-				optional: isOptionalSchema(schema),
+				optional: isOptional,
+				repeated: isRepeated,
+				packed: isPacked,
 				wireIssue: prependPath(key, { ok: false, code: 'invalid_wire', expected: schema.wire }),
 				missingIssue: prependPath(key, ISSUE_MISSING),
 			};
@@ -1536,7 +1505,6 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 				let seenCount = 0;
 
 				const obj: Record<string, unknown> = {};
-				let issues: IssueTree | undefined;
 
 				const end = state.b.length;
 				while (state.p < end) {
@@ -1572,15 +1540,65 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 						return entry.wireIssue;
 					}
 
-					// Decode the value
-					const result = entry.schema['~decode'](state);
+					const schema = entry.schema;
+					const key = entry.key;
 
-					// Failed to decode, file an issue
-					if (!result.ok) {
-						return prependPath(entry.key, result);
+					if (entry.repeated) {
+						if (entry.packed) {
+							const array: unknown[] = [];
+
+							const length = readVarint(state);
+							if (!length.ok) {
+								return prependPath(key, length);
+							}
+
+							const bytes = readBytes(state, length.value);
+							if (!bytes.ok) {
+								return prependPath(key, bytes);
+							}
+
+							const children: DecoderState = {
+								b: bytes.value,
+								p: 0,
+								v: null,
+							};
+
+							let idx = 0;
+							while (children.p < length.value) {
+								const r = schema['~decode'](children);
+
+								if (!r.ok) {
+									return prependPath(key, prependPath(idx, r));
+								}
+
+								array.push(r.value);
+								idx++;
+							}
+
+							/*#__INLINE__*/ set(obj, key, array);
+						} else {
+							let array = obj[key] as unknown[] | undefined;
+							if (array === undefined) {
+								set(obj, key, array = []);
+							}
+
+							const result = schema['~decode'](state);
+
+							if (!result.ok) {
+								return prependPath(key, prependPath(array.length, result));
+							}
+
+							array.push(result.value);
+						}
+					} else {
+						const result = schema['~decode'](state);
+
+						if (!result.ok) {
+							return prependPath(key, result);
+						}
+
+						/*#__INLINE__*/ set(obj, key, result.value);
 					}
-
-					/*#__INLINE__*/ set(obj, entry.key, result.value);
 				}
 
 				if (seenCount < len) {
@@ -1599,15 +1617,13 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 
 									/*#__INLINE__*/ set(obj, entry.key, defaultValue);
 								}
+							} else if (entry.repeated && !entry.packed) {
+								/*#__INLINE__*/ set(obj, entry.key, []);
 							} else {
 								return entry.missingIssue;
 							}
 						}
 					}
-				}
-
-				if (issues !== undefined) {
-					return issues;
 				}
 
 				return { ok: true, value: obj };
@@ -1654,16 +1670,57 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 					const entry = shape[tag];
 					const fieldValue = obj[entry.key];
 
-					if (entry.optional && fieldValue === undefined) {
+					if (fieldValue === undefined && entry.optional) {
 						continue;
 					}
 
-					writeVarint(state, (entry.tag << 3) | entry.wire);
+					const schema = entry.schema;
+					const key = entry.key;
 
-					const result = entry.schema['~encode'](state, fieldValue);
+					if (entry.repeated) {
+						if (!Array.isArray(fieldValue)) {
+							return prependPath(key, ARRAY_TYPE_ISSUE);
+						}
 
-					if (result) {
-						return prependPath(entry.key, result);
+						if (entry.packed) {
+							const children: EncoderState = {
+								c: [],
+								b: new Uint8Array(CHUNK_SIZE),
+								v: null,
+								p: 0,
+								l: 0,
+							};
+
+							for (let idx = 0, len = fieldValue.length; idx < len; idx++) {
+								const result = schema['~encode'](children, fieldValue[idx]);
+
+								if (result) {
+									return prependPath(idx, result);
+								}
+							}
+
+							const buffer = finishEncode(children);
+
+							writeVarint(state, (entry.tag << 3) | entry.wire);
+							writeVarint(state, buffer.length);
+							writeBytes(state, buffer);
+						} else {
+							for (let idx = 0, len = fieldValue.length; idx < len; idx++) {
+								writeVarint(state, (entry.tag << 3) | entry.wire);
+								const result = schema['~encode'](state, fieldValue[idx]);
+
+								if (result) {
+									return prependPath(idx, result);
+								}
+							}
+						}
+					} else {
+						writeVarint(state, (entry.tag << 3) | entry.wire);
+						const result = schema['~encode'](state, fieldValue);
+
+						if (result) {
+							return prependPath(key, result);
+						}
 					}
 				}
 			};
@@ -1715,18 +1772,16 @@ export type MapKeySchema =
 
 export type MapValueSchema = BaseSchema;
 
-export interface MapSchema<TKey extends MapKeySchema, TValue extends MapValueSchema>
-	extends BaseSchema<unknown[]> {
-	readonly type: 'map';
-	readonly wire: 2;
-	readonly key: TKey;
-	readonly value: TValue;
-
-	readonly [kObjectType]?: {
-		in: Map<InferInput<TKey>, InferInput<TValue>>;
-		out: Map<InferOutput<TKey>, InferOutput<TValue>>;
-	};
-}
+export interface MapSchema<TKey extends MapKeySchema, TValue extends MapValueSchema> extends
+	RepeatedSchema<
+		MessageSchema<{
+			key: TKey;
+			value: TValue;
+		}, {
+			readonly key: 1;
+			readonly value: 2;
+		}>
+	> {}
 
 /**
  * creates a key-value map schema
@@ -1737,54 +1792,9 @@ export interface MapSchema<TKey extends MapKeySchema, TValue extends MapValueSch
 export const map = <TKey extends MapKeySchema, TValue extends MapValueSchema>(
 	key: TKey,
 	value: TValue,
+	packed = false,
 ): MapSchema<TKey, TValue> => {
-	const Schema = repeated(message({ key, value }, { key: 1, value: 2 }));
-
-	type Entry = { key: TKey; value: TValue };
-
-	return {
-		kind: 'schema',
-		type: 'map',
-		wire: 2,
-		key,
-		value,
-		get '~decode'() {
-			const decoder: Decoder = (state) => {
-				const result = Schema['~decode'](state);
-				if (!result.ok) {
-					return result;
-				}
-
-				const map = new Map();
-
-				const entries = result.value as Entry[];
-				for (let idx = 0, len = entries.length; idx < len; idx++) {
-					const entry = entries[idx];
-					map.set(entry.key, entry.value);
-				}
-
-				return { ok: true, value: map };
-			};
-
-			return lazyProperty(this, '~decode', decoder);
-		},
-		get '~encode'() {
-			const encoder: Encoder = (state, input) => {
-				if (!(input instanceof Map)) {
-					return MAP_TYPE_ISSUE;
-				}
-
-				const entries: Entry[] = [];
-				for (const [key, value] of input) {
-					entries.push({ key, value });
-				}
-
-				return Schema['~encode'](state, entries);
-			};
-
-			return lazyProperty(this, '~encode', encoder);
-		},
-	};
+	return repeated(message({ key, value }, { key: 1, value: 2 }), packed);
 };
 
 // #endregion
