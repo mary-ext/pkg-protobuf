@@ -70,19 +70,6 @@ import * as p from '@mary/protobuf';
 		next: 2,
 	});
 }
-
-// maps
-{
-	const Scoreboard = p.message({
-		scores: p.map(p.string(), p.int32()),
-	}, {
-		scores: 1,
-	});
-
-	const data: p.InferInput<typeof Scoreboard> = {
-		scores: new Map([['alice', 100], ['bob', 95]]),
-	};
-}
 ```
 
 ## non-features
