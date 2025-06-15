@@ -1534,7 +1534,7 @@ const set = (obj: Record<string, unknown>, key: string, value: unknown): void =>
  * @returns structured message schema
  */
 // #__NO_SIDE_EFFECTS__
-export const message = <TShape extends LooseMessageShape, TTags extends Record<keyof TShape, number>>(
+export const message = <TShape extends LooseMessageShape, const TTags extends Record<keyof TShape, number>>(
 	shape: TShape,
 	tags: TTags,
 ): MessageSchema<TShape, TTags> => {
@@ -1881,7 +1881,13 @@ export const map = <TKey extends MapKeySchema, TValue extends MapValueSchema>(
  * encoded as a count of seconds and fractions of seconds at nanosecond
  * resolution.
  */
-export const Timestamp = /*#__PURE__*/ message({
+export const Timestamp: MessageSchema<{
+	seconds: OptionalSchema<Int64Schema, 0n>;
+	nanos: OptionalSchema<Int32Schema, 0>;
+}, {
+	readonly seconds: 1;
+	readonly nanos: 2;
+}> = /*#__PURE__*/ message({
 	seconds: /*#__PURE__*/ optional(/*#__PURE__*/ int64(), 0n),
 	nanos: /*#__PURE__*/ optional(/*#__PURE__*/ int32(), 0),
 }, {
@@ -1893,7 +1899,13 @@ export const Timestamp = /*#__PURE__*/ message({
  * represents a signed, fixed-length span of time represented as a count of
  * seconds and fractions of seconds at nanosecond resolution.
  */
-export const Duration = /*#__PURE__*/ message({
+export const Duration: MessageSchema<{
+	seconds: OptionalSchema<Int64Schema, 0n>;
+	nanos: OptionalSchema<Int32Schema, 0>;
+}, {
+	readonly seconds: 1;
+	readonly nanos: 2;
+}> = /*#__PURE__*/ message({
 	seconds: /*#__PURE__*/ optional(/*#__PURE__*/ int64(), 0n),
 	nanos: /*#__PURE__*/ optional(/*#__PURE__*/ int32(), 0),
 }, {
@@ -1905,7 +1917,13 @@ export const Duration = /*#__PURE__*/ message({
  * contains an arbitrary serialized protocol buffer message along with a URL
  * that describes the type of the serialized message.
  */
-export const Any = /*#__PURE__*/ message({
+export const Any: MessageSchema<{
+	typeUrl: OptionalSchema<StringSchema, ''>;
+	value: OptionalSchema<BytesSchema, Uint8Array<ArrayBuffer>>;
+}, {
+	readonly typeUrl: 1;
+	readonly value: 2;
+}> = /*#__PURE__*/ message({
 	typeUrl: /*#__PURE__*/ optional(/*#__PURE__*/ string(), ''),
 	value: /*#__PURE__*/ optional(/*#__PURE__*/ bytes(), /*#__PURE__*/ new Uint8Array(0)),
 }, {
