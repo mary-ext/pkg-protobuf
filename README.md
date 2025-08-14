@@ -1,5 +1,7 @@
 # protobuf
 
+[JSR](https://jsr.io/@mary/protobuf) | [source code](https://tangled.sh/mary.my.id/pkg-protobuf)
+
 protobuf codec with static type inference.
 
 ```typescript
