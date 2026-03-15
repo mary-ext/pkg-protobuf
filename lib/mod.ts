@@ -1348,47 +1348,98 @@ const isOptionalSchema = (schema: BaseSchema): schema is OptionalSchema<any> => 
 	return schema.type === 'optional';
 };
 
+// #region Oneof schema
+
+type InferOneofInput<TVariants extends Record<string, BaseSchema>> =
+	{ [K in keyof TVariants & string]: { case: K; value: InferInput<TVariants[K]> } }[keyof TVariants & string];
+
+type InferOneofOutput<TVariants extends Record<string, BaseSchema>> =
+	{ [K in keyof TVariants & string]: { case: K; value: InferOutput<TVariants[K]> } }[keyof TVariants & string];
+
+export interface OneofSchema<TVariants extends Record<string, BaseSchema> = Record<string, BaseSchema>> {
+	readonly kind: 'oneof';
+	readonly variants: Readonly<TVariants>;
+
+	readonly [kObjectType]?: { in: InferOneofInput<TVariants>; out: InferOneofOutput<TVariants> };
+}
+
+/**
+ * creates a oneof field schema where at most one variant can be set at a time
+ * @param variants record of variant names to their schemas
+ * @returns oneof field schema
+ */
+// #__NO_SIDE_EFFECTS__
+export const oneof = <TVariants extends Record<string, BaseSchema>>(
+	variants: TVariants,
+): OneofSchema<TVariants> => {
+	return {
+		kind: 'oneof',
+		variants,
+	};
+};
+
+const isOneofSchema = (schema: any): schema is OneofSchema => {
+	return schema !== null && typeof schema === 'object' && schema.kind === 'oneof';
+};
+
+// #endregion
+
 // #region Message schema
 
 export type LooseMessageShape = Record<string, any>;
-export type MessageShape = Record<string, BaseSchema>;
+export type MessageShape = Record<string, BaseSchema | OneofSchema>;
+
+type InferFieldInput<T> = T extends OneofSchema<infer V>
+	? InferOneofInput<V>
+	: T extends BaseSchema
+		? InferInput<T>
+		: never;
+
+type InferFieldOutput<T> = T extends OneofSchema<infer V>
+	? InferOneofOutput<V>
+	: T extends BaseSchema
+		? InferOutput<T>
+		: never;
 
 export type OptionalObjectInputKeys<TShape extends MessageShape> = {
-	[Key in keyof TShape]: TShape[Key] extends OptionalSchema<any, any> ? Key : never;
+	[Key in keyof TShape]: TShape[Key] extends OptionalSchema<any, any> ? Key
+		: TShape[Key] extends OneofSchema<any> ? Key
+		: never;
 }[keyof TShape];
 
 export type OptionalObjectOutputKeys<TShape extends MessageShape> = {
 	[Key in keyof TShape]: TShape[Key] extends OptionalSchema<any, infer Default>
 		? undefined extends Default ? Key
 		: never
+		: TShape[Key] extends OneofSchema<any> ? Key
 		: never;
 }[keyof TShape];
 
 type InferMessageInput<TShape extends MessageShape> = Flatten<
 	& {
-		-readonly [Key in Exclude<keyof TShape, OptionalObjectInputKeys<TShape>>]: InferInput<
+		-readonly [Key in Exclude<keyof TShape, OptionalObjectInputKeys<TShape>>]: InferFieldInput<
 			TShape[Key]
 		>;
 	}
 	& {
-		-readonly [Key in OptionalObjectInputKeys<TShape>]?: InferInput<TShape[Key]>;
+		-readonly [Key in OptionalObjectInputKeys<TShape>]?: InferFieldInput<TShape[Key]>;
 	}
 >;
 
 type InferMessageOutput<TShape extends MessageShape> = Flatten<
 	& {
-		-readonly [Key in Exclude<keyof TShape, OptionalObjectOutputKeys<TShape>>]: InferOutput<
+		-readonly [Key in Exclude<keyof TShape, OptionalObjectOutputKeys<TShape>>]: InferFieldOutput<
 			TShape[Key]
 		>;
 	}
 	& {
-		-readonly [Key in OptionalObjectOutputKeys<TShape>]?: InferOutput<TShape[Key]>;
+		-readonly [Key in OptionalObjectOutputKeys<TShape>]?: InferFieldOutput<TShape[Key]>;
 	}
 >;
 
 export interface MessageSchema<
 	TShape extends LooseMessageShape = LooseMessageShape,
-	TTags extends Record<keyof TShape, number> = Record<keyof TShape, number>,
+	TTags extends Record<keyof TShape, number | Record<string, number>> = Record<keyof TShape, number | Record<string, number>>,
 > extends BaseSchema<Record<string, unknown>> {
 	readonly type: 'message';
 	readonly wire: 2;
@@ -1416,6 +1467,18 @@ interface MessageEntry {
 	missingIssue: IssueTree;
 }
 
+interface OneofVariant {
+	schema: BaseSchema;
+	tag: number;
+	wire: WireType;
+}
+
+interface OneofGroup {
+	key: string;
+	schema: OneofSchema;
+	variants: Record<string, OneofVariant>;
+}
+
 const ISSUE_MISSING: IssueLeaf = {
 	ok: false,
 	code: 'missing_value',
@@ -1436,19 +1499,66 @@ const set = (obj: Record<string, unknown>, key: string, value: unknown): void =>
  * @returns structured message schema
  */
 // #__NO_SIDE_EFFECTS__
-export const message = <TShape extends LooseMessageShape, const TTags extends Record<keyof TShape, number>>(
+export const message = <TShape extends LooseMessageShape, const TTags extends Record<keyof TShape, number | Record<string, number>>>(
 	shape: TShape,
 	tags: TTags,
 ): MessageSchema<TShape, TTags> => {
-	const resolvedEntries = lazy((): Record<number, MessageEntry> => {
-		const resolved: Record<number, MessageEntry> = {};
+	const resolvedEntries = lazy((): {
+		decode: Record<number, MessageEntry>;
+		encode: Record<number, MessageEntry>;
+		oneofs: OneofGroup[];
+	} => {
+		const decode: Record<number, MessageEntry> = {};
+		const encode: Record<number, MessageEntry> = {};
+		const oneofs: OneofGroup[] = [];
 		const obj = shape as MessageShape;
 
 		for (const key in obj) {
 			const schema = obj[key];
-			const tag = tags[key];
+			const tag = (tags as any)[key];
 
-			let innerSchema = schema;
+			if (isOneofSchema(schema)) {
+				const variantTags = tag as Record<string, number>;
+				const group: OneofGroup = { key, schema, variants: {} };
+
+				for (const variantKey in schema.variants) {
+					const variantSchema = schema.variants[variantKey];
+					const variantTag = variantTags[variantKey];
+
+					group.variants[variantKey] = {
+						schema: variantSchema,
+						tag: variantTag,
+						wire: variantSchema.wire,
+					};
+
+					decode[variantTag] = {
+						key: key,
+						schema: {
+							kind: 'schema',
+							type: 'oneof_variant',
+							wire: variantSchema.wire,
+							'~decode'(state) {
+								const result = variantSchema['~decode'](state);
+								if (!result.ok) return result;
+								return { ok: true, value: { case: variantKey, value: result.value } };
+							},
+							'~encode'() {},
+						} as BaseSchema,
+						tag: variantTag,
+						wire: variantSchema.wire,
+						optional: true,
+						repeated: false,
+						packed: false,
+						wireIssue: prependPath(key, { ok: false, code: 'invalid_wire', expected: variantSchema.wire }),
+						missingIssue: prependPath(key, ISSUE_MISSING),
+					};
+				}
+
+				oneofs.push(group);
+				continue;
+			}
+
+			let innerSchema = schema as BaseSchema;
 
 			const isOptional = isOptionalSchema(innerSchema);
 			if (isOptional) {
@@ -1461,20 +1571,23 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 				innerSchema = (innerSchema as RepeatedSchema).item;
 			}
 
-			resolved[tag] = {
+			const entry: MessageEntry = {
 				key: key,
-				schema: schema,
+				schema: schema as BaseSchema,
 				tag: tag,
-				wire: schema.wire,
+				wire: (schema as BaseSchema).wire,
 				optional: isOptional,
 				repeated: isRepeated,
 				packed: isPacked,
-				wireIssue: prependPath(key, { ok: false, code: 'invalid_wire', expected: schema.wire }),
+				wireIssue: prependPath(key, { ok: false, code: 'invalid_wire', expected: (schema as BaseSchema).wire }),
 				missingIssue: prependPath(key, ISSUE_MISSING),
 			};
+
+			decode[tag] = entry;
+			encode[tag] = entry;
 		}
 
-		return resolved;
+		return { decode, encode, oneofs };
 	});
 
 	return {
@@ -1485,19 +1598,23 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 		get shape() {
 			// if we just return the shape as is then it wouldn't be the same exact
 			// shape when getters are present.
-			const resolved = resolvedEntries.value;
+			const { encode, oneofs } = resolvedEntries.value;
 			const obj: any = {};
 
-			for (const index in resolved) {
-				const entry = resolved[index];
+			for (const index in encode) {
+				const entry = encode[index];
 				obj[entry.key] = entry.schema;
+			}
+
+			for (let i = 0; i < oneofs.length; i++) {
+				obj[oneofs[i].key] = oneofs[i].schema;
 			}
 
 			return lazyProperty(this, 'shape', obj as TShape);
 		},
 
 		get '~~decode'() {
-			const shape = resolvedEntries.value;
+			const shape = resolvedEntries.value.decode;
 			const len = Object.keys(shape).length;
 
 			const decoder: Decoder = (state) => {
@@ -1657,7 +1774,7 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 			return lazyProperty(this, '~decode', decoder);
 		},
 		get '~~encode'() {
-			const shape = resolvedEntries.value;
+			const { encode: shape, oneofs } = resolvedEntries.value;
 
 			const encoder: Encoder = (state, input) => {
 				if (typeof input !== 'object' || input === null || Array.isArray(input)) {
@@ -1721,6 +1838,32 @@ export const message = <TShape extends LooseMessageShape, const TTags extends Re
 						if (result) {
 							return prependPath(key, result);
 						}
+					}
+				}
+
+				for (let i = 0; i < oneofs.length; i++) {
+					const group = oneofs[i];
+					const fieldValue = obj[group.key] as { case: string; value: unknown } | undefined;
+
+					if (fieldValue === undefined) {
+						continue;
+					}
+
+					if (typeof fieldValue !== 'object' || fieldValue === null) {
+						return prependPath(group.key, OBJECT_TYPE_ISSUE);
+					}
+
+					const variant = group.variants[fieldValue.case];
+
+					if (!variant) {
+						continue;
+					}
+
+					writeVarint(state, (variant.tag << 3) | variant.wire);
+					const result = variant.schema['~encode'](state, fieldValue.value);
+
+					if (result) {
+						return prependPath(group.key, result);
 					}
 				}
 			};

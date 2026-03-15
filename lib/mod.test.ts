@@ -3,6 +3,8 @@ import { nanoid } from 'nanoid/non-secure';
 
 import * as p from './mod.ts';
 
+function assertType<T>(_value: T): void {}
+
 // #region Primitive types
 
 Deno.test('string encoding/decoding', () => {
@@ -1462,6 +1464,251 @@ Deno.test('large byte array handling', () => {
 	const decoded = p.decode(Message, encoded);
 
 	assertEquals(decoded, { data });
+});
+
+// #endregion
+
+// #region Oneof
+
+Deno.test('oneof encoding/decoding', () => {
+	const Message = p.message({
+		id: p.int32(),
+		result: p.oneof({
+			name: p.string(),
+			count: p.int32(),
+		}),
+	}, {
+		id: 1,
+		result: { name: 2, count: 3 },
+	});
+
+	// string variant
+	{
+		const encoded = p.encode(Message, { id: 1, result: { case: 'name', value: 'hello' } });
+		const decoded = p.decode(Message, encoded);
+		assertEquals(decoded, { id: 1, result: { case: 'name', value: 'hello' } });
+	}
+
+	// int32 variant
+	{
+		const encoded = p.encode(Message, { id: 2, result: { case: 'count', value: 42 } });
+		const decoded = p.decode(Message, encoded);
+		assertEquals(decoded, { id: 2, result: { case: 'count', value: 42 } });
+	}
+
+	// no variant set
+	{
+		const encoded = p.encode(Message, { id: 3 });
+		const decoded = p.decode(Message, encoded);
+		assertEquals(decoded, { id: 3 });
+	}
+});
+
+Deno.test('oneof with nested messages', () => {
+	const TextContent = p.message({
+		body: p.string(),
+	}, { body: 1 });
+
+	const ImageContent = p.message({
+		url: p.string(),
+		width: p.int32(),
+	}, { url: 1, width: 2 });
+
+	const Post = p.message({
+		title: p.string(),
+		content: p.oneof({
+			text: TextContent,
+			image: ImageContent,
+		}),
+	}, {
+		title: 1,
+		content: { text: 2, image: 3 },
+	});
+
+	// text variant
+	{
+		const data = { title: 'Hello', content: { case: 'text' as const, value: { body: 'world' } } };
+		const encoded = p.encode(Post, data);
+		const decoded = p.decode(Post, encoded);
+		assertEquals(decoded, data);
+	}
+
+	// image variant
+	{
+		const data = { title: 'Photo', content: { case: 'image' as const, value: { url: 'https://example.com/img.png', width: 800 } } };
+		const encoded = p.encode(Post, data);
+		const decoded = p.decode(Post, encoded);
+		assertEquals(decoded, data);
+	}
+});
+
+Deno.test('oneof last-one-wins on decode', () => {
+	// Manually construct wire data with two oneof variants set.
+	// The decoder should keep the last one.
+	const Message = p.message({
+		result: p.oneof({
+			name: p.string(),
+			count: p.int32(),
+		}),
+	}, {
+		result: { name: 1, count: 2 },
+	});
+
+	// Encode two separate messages and concatenate — protobuf merges on decode
+	const encoded1 = p.encode(Message, { result: { case: 'name', value: 'first' } });
+	const encoded2 = p.encode(Message, { result: { case: 'count', value: 99 } });
+
+	const combined = new Uint8Array(encoded1.length + encoded2.length);
+	combined.set(encoded1);
+	combined.set(encoded2, encoded1.length);
+
+	// ~~decode works on raw bytes (no length prefix), so use it directly
+	const decoded = p.decode(Message, combined);
+	assertEquals(decoded, { result: { case: 'count', value: 99 } });
+});
+
+Deno.test('oneof with various wire types', () => {
+	const Message = p.message({
+		value: p.oneof({
+			text: p.string(),
+			flag: p.boolean(),
+			big: p.int64(),
+			precise: p.double(),
+			raw: p.bytes(),
+		}),
+	}, {
+		value: { text: 1, flag: 2, big: 3, precise: 4, raw: 5 },
+	});
+
+	const roundtrip = (input: p.InferInput<typeof Message>) => {
+		const encoded = p.encode(Message, input);
+		const decoded = p.decode(Message, encoded);
+		assertEquals(decoded, input);
+	};
+
+	roundtrip({ value: { case: 'text', value: 'hello' } });
+	roundtrip({ value: { case: 'flag', value: true } });
+	roundtrip({ value: { case: 'big', value: 42n } });
+	roundtrip({ value: { case: 'precise', value: 3.14 } });
+	roundtrip({ value: { case: 'raw', value: new Uint8Array([1, 2, 3]) } });
+});
+
+Deno.test('oneof alongside regular and optional fields', () => {
+	const Message = p.message({
+		id: p.int32(),
+		label: p.optional(p.string()),
+		kind: p.oneof({
+			name: p.string(),
+			age: p.int32(),
+		}),
+		tags: p.repeated(p.string()),
+	}, {
+		id: 1,
+		label: 2,
+		kind: { name: 3, age: 4 },
+		tags: 5,
+	});
+
+	// all fields present
+	{
+		const data = {
+			id: 10,
+			label: 'test',
+			kind: { case: 'age' as const, value: 25 },
+			tags: ['a', 'b'],
+		};
+		const encoded = p.encode(Message, data);
+		const decoded = p.decode(Message, encoded);
+		assertEquals(decoded, data);
+	}
+
+	// optional and oneof absent
+	{
+		const data = { id: 5, tags: ['x'] };
+		const encoded = p.encode(Message, data);
+		const decoded = p.decode(Message, encoded);
+		assertEquals(decoded, { id: 5, tags: ['x'] });
+	}
+});
+
+Deno.test('oneof type validation during encoding', () => {
+	const Message = p.message({
+		result: p.oneof({
+			name: p.string(),
+		}),
+	}, {
+		result: { name: 1 },
+	});
+
+	// non-object value for oneof should error
+	// deno-lint-ignore no-explicit-any
+	const result = p.tryEncode(Message, { result: 'not an object' } as any);
+	assert(!result.ok);
+});
+
+Deno.test('oneof unknown case is silently skipped', () => {
+	const Message = p.message({
+		id: p.int32(),
+		result: p.oneof({
+			name: p.string(),
+		}),
+	}, {
+		id: 1,
+		result: { name: 2 },
+	});
+
+	// Unknown case should not encode anything for the oneof
+	// deno-lint-ignore no-explicit-any
+	const encoded = p.encode(Message, { id: 1, result: { case: 'nonexistent', value: 'x' } } as any);
+	const decoded = p.decode(Message, encoded);
+	assertEquals(decoded, { id: 1 });
+});
+
+Deno.test('oneof type inference', () => {
+	const Inner = p.message({ value: p.int32() }, { value: 1 });
+
+	const Message = p.message({
+		id: p.int32(),
+		label: p.optional(p.string()),
+		result: p.oneof({
+			name: p.string(),
+			count: p.int32(),
+			nested: Inner,
+		}),
+	}, {
+		id: 1,
+		label: 2,
+		result: { name: 3, count: 4, nested: 5 },
+	});
+
+	type Input = p.InferInput<typeof Message>;
+	type Output = p.InferOutput<typeof Message>;
+
+	// required fields are required
+	assertType<Input>({ id: 1 });
+
+	// optional and oneof fields can be omitted
+	assertType<Input>({ id: 1, label: undefined, result: undefined });
+
+	// oneof produces discriminated union
+	assertType<Input>({ id: 1, result: { case: 'name', value: 'hello' } });
+	assertType<Input>({ id: 1, result: { case: 'count', value: 42 } });
+	assertType<Input>({ id: 1, result: { case: 'nested', value: { value: 1 } } });
+
+	// output types match input
+	assertType<Output>({ id: 1 });
+	assertType<Output>({ id: 1, result: { case: 'name', value: 'hello' } });
+	assertType<Output>({ id: 1, result: { case: 'count', value: 42 } });
+	assertType<Output>({ id: 1, result: { case: 'nested', value: { value: 1 } } });
+
+	// @ts-expect-error — wrong value type for variant
+	assertType<Input>({ id: 1, result: { case: 'name', value: 123 } });
+
+	// @ts-expect-error — invalid case name
+	assertType<Input>({ id: 1, result: { case: 'unknown', value: 'x' } });
+
+	// @ts-expect-error — missing required field
+	assertType<Input>({ result: { case: 'name', value: 'hello' } });
 });
 
 // #endregion

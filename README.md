@@ -72,12 +72,43 @@ import * as p from '@mary/protobuf';
 		next: 2,
 	});
 }
+
+// oneof fields
+{
+	const TextContent = p.message({
+		body: p.string(),
+	}, { body: 1 });
+
+	const ImageContent = p.message({
+		url: p.string(),
+		width: p.int32(),
+	}, { url: 1, width: 2 });
+
+	const Post = p.message({
+		title: p.string(),
+		content: p.oneof({
+			text: TextContent,
+			image: ImageContent,
+		}),
+	}, {
+		title: 1,
+		content: { text: 2, image: 3 },
+	});
+
+	const post: p.InferInput<typeof Post> = {
+		title: 'Hello',
+		content: { case: 'text', value: { body: 'world' } },
+	};
+
+	const encoded = p.encode(Post, post);
+	const decoded = p.decode(Post, encoded);
+	//    ^? { title: string, content?: { case: 'text', value: ... } | { case: 'image', value: ... } }
+}
 ```
 
 ## non-features
 
 - **enums support**: use `int32()` instead for open enums
-- **oneof support**: complicated, breaks self-referential messages
 - **extensions support**: not supported
 - **groups support**: use nested messages instead
 - **code generation**: no intent
